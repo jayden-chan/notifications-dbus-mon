@@ -84,6 +84,8 @@ async fn main() -> zbus::Result<()> {
                                     5000,
                                 )
                                 .await?;
+
+                            println!("Copied code to clipboard");
                         }
                     }
                 }
