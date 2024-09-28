@@ -30,64 +30,76 @@ async fn main() -> zbus::Result<()> {
     while let Some(msg) = stream.try_next().await? {
         let header = msg.header();
         let message_type = header.message_type();
+
+        if !matches!(message_type, zbus::MessageType::MethodCall) {
+            continue;
+        }
+
         let interface = header.interface();
         let path = header.path();
         let member = header.member();
 
-        if matches!(message_type, zbus::MessageType::MethodCall) {
-            if let (Some(interface), Some(path), Some(member)) = (interface, path, member) {
-                if interface == "org.freedesktop.Notifications"
-                    && path == "/org/freedesktop/Notifications"
-                    && member == "Notify"
+        if let (Some(interface), Some(path), Some(member)) = (interface, path, member) {
+            if interface == "org.freedesktop.Notifications"
+                && path == "/org/freedesktop/Notifications"
+                && member == "Notify"
+            {
+                let body = msg.body();
+                let body: zbus::zvariant::Structure = body.deserialize()?;
+                let fields = body.fields();
+
+                let sender = &fields[0];
+                let summary = &fields[3];
+                let body = &fields[4];
+
+                if !matches!(body, zbus::zvariant::Value::Str(_))
+                    || matches!(sender, zbus::zvariant::Value::Str(_))
+                    || matches!(summary, zbus::zvariant::Value::Str(_))
                 {
-                    let body = msg.body();
-                    let body: zbus::zvariant::Structure = body.deserialize()?;
-                    let fields = body.fields();
+                    continue;
+                }
 
-                    let sender = &fields[0];
-                    let body = &fields[4];
+                // if the sender is ourselves we skip the notification to avoid an infinite
+                // loop
+                let sender: &str = sender.try_into()?;
+                if sender == "notifications-dbus-mon" {
+                    continue;
+                }
 
-                    if matches!(body, zbus::zvariant::Value::Str(_))
-                        && matches!(sender, zbus::zvariant::Value::Str(_))
-                    {
-                        let sender: &str = sender.try_into()?;
+                // if the notification is coming from the color picker just ignore
+                let summary: &str = summary.try_into()?;
+                if summary == "Color picker" {
+                    continue;
+                }
 
-                        // if the sender is ourselves we skip the notification to avoid an infinite
-                        // loop
-                        if sender == "notifications-dbus-mon" {
-                            continue;
-                        }
+                if let Some(caps) = code_re.captures(body.try_into()?) {
+                    let code = &caps["code"];
 
-                        if let Some(caps) = code_re.captures(body.try_into()?) {
-                            let code = &caps["code"];
+                    let code_copied = code.to_owned();
+                    std::thread::spawn(move || {
+                        let mut clipboard = Clipboard::new().unwrap();
+                        clipboard.set_text(code_copied).unwrap();
 
-                            let code_copied = code.to_owned();
-                            std::thread::spawn(move || {
-                                let mut clipboard = Clipboard::new().unwrap();
-                                clipboard.set_text(code_copied).unwrap();
+                        // this thread has to stay alive or else the value will
+                        // be dropped from the X clipboard. we'll allow 1 minute
+                        // for the code to be consumed from the clipboard
+                        std::thread::sleep(Duration::from_secs(60));
+                    });
 
-                                // this thread has to stay alive or else the value will
-                                // be dropped from the X clipboard. we'll allow 1 minute
-                                // for the code to be consumed from the clipboard
-                                std::thread::sleep(Duration::from_secs(60));
-                            });
+                    notification_proxy
+                        .notify(
+                            "notifications-dbus-mon",
+                            0,
+                            "",
+                            "Code copied",
+                            &format!("Code \"{code}\" copied to clipboard"),
+                            &[],
+                            std::collections::HashMap::new(),
+                            5000,
+                        )
+                        .await?;
 
-                            notification_proxy
-                                .notify(
-                                    "notifications-dbus-mon",
-                                    0,
-                                    "",
-                                    "Code copied",
-                                    &format!("Code \"{code}\" copied to clipboard"),
-                                    &[],
-                                    std::collections::HashMap::new(),
-                                    5000,
-                                )
-                                .await?;
-
-                            println!("Copied code to clipboard");
-                        }
-                    }
+                    println!("Copied code to clipboard");
                 }
             }
         }
