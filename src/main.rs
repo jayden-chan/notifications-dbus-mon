@@ -40,67 +40,69 @@ async fn main() -> zbus::Result<()> {
         let member = header.member();
 
         if let (Some(interface), Some(path), Some(member)) = (interface, path, member) {
-            if interface == "org.freedesktop.Notifications"
-                && path == "/org/freedesktop/Notifications"
-                && member == "Notify"
+            if interface != "org.freedesktop.Notifications"
+                || path != "/org/freedesktop/Notifications"
+                || member != "Notify"
             {
-                let body = msg.body();
-                let body: zbus::zvariant::Structure = body.deserialize()?;
-                let fields = body.fields();
+                continue;
+            }
 
-                let sender = &fields[0];
-                let summary = &fields[3];
-                let body = &fields[4];
+            let body = msg.body();
+            let body: zbus::zvariant::Structure = body.deserialize()?;
+            let fields = body.fields();
 
-                if !matches!(body, zbus::zvariant::Value::Str(_))
-                    || matches!(sender, zbus::zvariant::Value::Str(_))
-                    || matches!(summary, zbus::zvariant::Value::Str(_))
-                {
-                    continue;
-                }
+            let sender = &fields[0];
+            let summary = &fields[3];
+            let body = &fields[4];
 
-                // if the sender is ourselves we skip the notification to avoid an infinite
-                // loop
-                let sender: &str = sender.try_into()?;
-                if sender == "notifications-dbus-mon" {
-                    continue;
-                }
+            if !matches!(body, zbus::zvariant::Value::Str(_))
+                || !matches!(sender, zbus::zvariant::Value::Str(_))
+                || !matches!(summary, zbus::zvariant::Value::Str(_))
+            {
+                continue;
+            }
 
-                // if the notification is coming from the color picker just ignore
-                let summary: &str = summary.try_into()?;
-                if summary == "Color picker" {
-                    continue;
-                }
+            // if the sender is ourselves we skip the notification to avoid an infinite
+            // loop
+            let sender: &str = sender.try_into()?;
+            if sender == "notifications-dbus-mon" {
+                continue;
+            }
 
-                if let Some(caps) = code_re.captures(body.try_into()?) {
-                    let code = &caps["code"];
+            // if the notification is coming from the color picker just ignore
+            let summary: &str = summary.try_into()?;
+            if summary == "Color picker" {
+                continue;
+            }
 
-                    let code_copied = code.to_owned();
-                    std::thread::spawn(move || {
-                        let mut clipboard = Clipboard::new().unwrap();
-                        clipboard.set_text(code_copied).unwrap();
+            if let Some(caps) = code_re.captures(body.try_into()?) {
+                let code = &caps["code"];
 
-                        // this thread has to stay alive or else the value will
-                        // be dropped from the X clipboard. we'll allow 1 minute
-                        // for the code to be consumed from the clipboard
-                        std::thread::sleep(Duration::from_secs(60));
-                    });
+                let code_copied = code.to_owned();
+                std::thread::spawn(move || {
+                    let mut clipboard = Clipboard::new().unwrap();
+                    clipboard.set_text(code_copied).unwrap();
 
-                    notification_proxy
-                        .notify(
-                            "notifications-dbus-mon",
-                            0,
-                            "",
-                            "Code copied",
-                            &format!("Code \"{code}\" copied to clipboard"),
-                            &[],
-                            std::collections::HashMap::new(),
-                            5000,
-                        )
-                        .await?;
+                    // this thread has to stay alive or else the value will
+                    // be dropped from the X clipboard. we'll allow 1 minute
+                    // for the code to be consumed from the clipboard
+                    std::thread::sleep(Duration::from_secs(60));
+                });
 
-                    println!("Copied code to clipboard");
-                }
+                notification_proxy
+                    .notify(
+                        "notifications-dbus-mon",
+                        0,
+                        "",
+                        "Code copied",
+                        &format!("Code \"{code}\" copied to clipboard"),
+                        &[],
+                        std::collections::HashMap::new(),
+                        5000,
+                    )
+                    .await?;
+
+                println!("Copied code to clipboard");
             }
         }
     }
