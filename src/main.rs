@@ -8,7 +8,7 @@ use zbus::{Connection, MessageStream};
 
 #[tokio::main]
 async fn main() -> zbus::Result<()> {
-    let code_re = Regex::new(r"(?:\s|^)(?P<code>\d{6})(?:\s|$)").unwrap();
+    let code_re = Regex::new(r"(?:\s|^)(?P<code>\d{6})(?:\s|\.|$)").unwrap();
 
     let connection = Connection::session().await?;
 
